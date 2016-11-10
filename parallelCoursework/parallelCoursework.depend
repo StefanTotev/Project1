@@ -1,0 +1,8 @@
+# depslib dependency file v1.0
+1478803678 source:e:\parallelcoursework\main.c
+	<stdio.h>
+	<stdlib.h>
+	<time.h>
+	<stdbool.h>
+	<math.h>
+
