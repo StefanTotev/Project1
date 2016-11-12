@@ -3,6 +3,9 @@
 #include <time.h>
 #include <stdbool.h>
 #include <math.h>
+#include <pthread.h>
+
+#define NUMBER_OF_THREADS 5
 
 void populateMatrix(int size,
                     double *mainMatrix,
@@ -74,9 +77,22 @@ bool differenceIsAbovePrecision(int size,
     return false;
 }
 
-int main(void)
+void *BusyWork(void *t) {
+    int i, tid = (int)t;
+    double result=0.0;
+    printf("Thread %d starting...\n",tid);
+    for (i=0; i<1000000; i++) {
+        result = result + sin(i) * tan(i);
+    }
+    printf("Thread %d done. Result = %e\n", tid, result);
+    pthread_exit((void*) t);
+    return 0;
+}
+
+int main(int argc, char *argv[])
 {
-    int size=12, iterationCounter=0;
+    int size=10, iterationCounter=0, returnCode, i;
+    void *status;
     double *mainMatrix = malloc(size * size * sizeof(double)),
            *updatedMatrix = malloc(size * size * sizeof(double)),
            precision = 0.002;
@@ -86,7 +102,33 @@ int main(void)
         return 1;
     }
 
-    populateMatrix(size, mainMatrix, updatedMatrix);
+    pthread_t thread[NUMBER_OF_THREADS];
+    pthread_attr_t attributes;
+    pthread_attr_init(&attributes);
+    pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_JOINABLE);
+
+    for(i = 0; i < NUMBER_OF_THREADS; i++) {
+        printf("Main: creating thread %d\n", i);
+        returnCode = pthread_create(&thread[i], &attributes, BusyWork, (void *)i);
+        if (returnCode) {
+            printf("ERROR: pthread_create() returned code %d\n", returnCode);
+            return 1;
+        }
+    }
+
+    pthread_attr_destroy(&attributes);
+
+    for(i = 0; i < NUMBER_OF_THREADS; i++) {
+        returnCode = pthread_join(thread[i], &status);
+        if (returnCode) {
+            printf("ERROR: pthread_join() returned code %d\n", returnCode);
+            return 1;
+        }
+        printf("Main: completed join with thread %d having a status of %d\n", i, (int)status);
+    }
+
+
+    /*populateMatrix(size, mainMatrix, updatedMatrix);
     printMatrix(size, mainMatrix);
 
     do {
@@ -95,8 +137,10 @@ int main(void)
         iterationCounter++;
     } while (differenceIsAbovePrecision(size, precision, mainMatrix, updatedMatrix));
 
-    printf("%d ", iterationCounter);
+    printf("%d ", iterationCounter);*/
 
+    printf("Main: program completed. Exiting.\n");
+    pthread_exit(NULL);
     free(mainMatrix);
     free(updatedMatrix);
     return 0;
