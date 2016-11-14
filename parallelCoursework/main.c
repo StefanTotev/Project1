@@ -76,7 +76,7 @@ bool differenceIsAbovePrecision(int size,
 
 int main(void)
 {
-    int size=12, iterationCounter=0;
+    int size=7, iterationCounter=0;
     double *mainMatrix = malloc(size * size * sizeof(double)),
            *updatedMatrix = malloc(size * size * sizeof(double)),
            precision = 0.002;
