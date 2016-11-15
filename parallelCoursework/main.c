@@ -13,19 +13,8 @@ struct jobQueue {
 struct jobQueue *head = NULL;
 struct jobQueue *initialHead = NULL;
 
-int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=7;
-double *mainMatrix, *updatedMatrix, precision = 0.002;
-
-/*void freeJobQueue() {
-    struct jobQueue *curr = head;
-    pthread_mutex_lock(&lock);
-    while ((curr = head) != NULL) { // set curr to head, stop if list empty.
-    head = head->nextJob;          // advance head to next element.
-    free (curr);                // delete saved pointer.
-}
-    pthread_mutex_unlock(&lock);
-
-}*/
+int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=8, iterationCounter=0;
+double *mainMatrix, *calculatedMatrix, precision = 0.002;
 
 struct jobQueue* getAndForwardHead() {
 
@@ -41,30 +30,17 @@ struct jobQueue* getAndForwardHead() {
 
 void insertElement(int row, int column, int flag) {
     //create a link
-    struct jobQueue *link = (struct jobQueue*) malloc(sizeof(struct jobQueue));
+    struct jobQueue *newJob = (struct jobQueue*) malloc(sizeof(struct jobQueue));
 
-    link->row = row;
-    link->column = column;
-    link->syncFlag = flag;
+    newJob->row = row;
+    newJob->column = column;
+    newJob->syncFlag = flag;
 
     //point it to old first node
-    link->nextJob = head;
+    newJob->nextJob = head;
 
     //point first to new first node
-    head = link;
-}
-
-void printList() {
-   struct jobQueue *ptr = head;
-   printf("\n[ ");
-
-   //start from the beginning
-   while(ptr != NULL) {
-      printf("(%d,%d,%d) ",ptr->row,ptr->column,ptr->syncFlag);
-      ptr = ptr->nextJob;
-   }
-
-   printf(" ]");
+    head = newJob;
 }
 
 void populateJobQueue() {
@@ -74,15 +50,15 @@ void populateJobQueue() {
     for(i = 1; i < size - 1; i++) {
         for(j = 1; j < size - 1; j++) {
             if((i+j)%2 != 0) {
-                insertElement(i, j, 0);
+                if(i==1 && j==2) insertElement(i, j, 1);
+                else insertElement(i, j, 0);
             }
         }
     }
     for(i = 1; i < size - 1; i++) {
         for(j = 1; j < size - 1; j++) {
             if((i+j)%2 == 0) {
-                if(i==1 && j==1) insertElement(i, j, 1);
-                else insertElement(i, j, 0);
+                insertElement(i, j, 0);
             }
         }
     }
@@ -91,18 +67,27 @@ void populateJobQueue() {
 
 void populateMatrix() {
 
-    FILE *array = fopen("arrayOfNumbers.txt", "r");
+    FILE *matrix = fopen("arrayOfNumbers.txt", "r");
 
     int i=0;
-    float num;
+    float number;
 
-    while(fscanf(array, "%f", &num) > 0 && i < size*size) {
-        mainMatrix[i] = num;
-        updatedMatrix[i] = mainMatrix[i];
+    while(fscanf(matrix, "%f", &number) > 0 && i < size*size) {
+        mainMatrix[i] = number;
+        calculatedMatrix[i] = mainMatrix[i];
         i++;
     }
 
-    fclose(array);
+    fclose(matrix);
+}
+
+void updateMatrix() {
+    int i, j;
+    for(i = 0; i < size; i++) {
+        for(j = 0; j < size; j++) {
+            mainMatrix[size * i + j] = calculatedMatrix[size * i + j];
+        }
+    }
 }
 
 void printMatrix() {
@@ -118,69 +103,53 @@ void printMatrix() {
 }
 
 void calculateJobs() {
-    int i, j, row, column, elementsInMatrix = (size-2)*(size-2);
-    struct jobQueue *tempHead = NULL;
+    int row, column, innerElementsInMatrix = (size-2)*(size-2);
+    struct jobQueue *tempHead;
+    while(elementsBelowPrecision < innerElementsInMatrix) {
+        tempHead = getAndForwardHead();
 
-    while(elementsBelowPrecision < elementsInMatrix) {
-        tempHead = NULL;
+        row = tempHead->row;
+        column = tempHead->column;
 
-        if(head == NULL) {
-            head = initialHead;
-            printf("\n%d\n",elementsBelowPrecision);
-            elementsBelowPrecision = 0;
-            for(i = 0; i < size; i++) {
-                for(j = 0; j < size; j++) {
-                    mainMatrix[size * i + j] = updatedMatrix[size * i + j];
-                }
-            }
-            printMatrix();
-        } else if(head != NULL) {
-            tempHead = getAndForwardHead();
+        calculatedMatrix[size*row+column] = (calculatedMatrix[size*row + (column - 1)] +
+                                          calculatedMatrix[size*row + (column + 1)] +
+                                          calculatedMatrix[size*(row - 1) + column] +
+                                          calculatedMatrix[size*(row + 1) + column]) / 4;
+        if (fabs(mainMatrix[size * row + column] - calculatedMatrix[size * row + column]) < precision) {
+            elementsBelowPrecision++;
         }
 
-        if(tempHead != NULL){
-
-            row = tempHead->row;
-            column = tempHead->column;
-
-            updatedMatrix[size*row+column] = (updatedMatrix[size*row + (column - 1)] +
-                                              updatedMatrix[size*row + (column + 1)] +
-                                              updatedMatrix[size*(row - 1) + column] +
-                                              updatedMatrix[size*(row + 1) + column]) / 4;
-            if (fabs(mainMatrix[size * row + column] - updatedMatrix[size * row + column]) < precision) {
-                elementsBelowPrecision++;
-            }
+        if (tempHead->syncFlag == 1) {
+            head = initialHead;
+            if(elementsBelowPrecision < innerElementsInMatrix) elementsBelowPrecision=0;
+            updateMatrix();
+            iterationCounter++;
+            printMatrix();
         }
     }
-    for(i = 0; i < size; i++) {
-                for(j = 0; j < size; j++) {
-                    mainMatrix[size * i + j] = updatedMatrix[size * i + j];
-                }
-            }
-    printf("\n%d\n",elementsBelowPrecision);
-    printMatrix();
-
+    free(tempHead);
 }
 
 int main(int argc, char *argv[])
 {
-    mainMatrix = malloc(size * size * sizeof(double));
-    updatedMatrix = malloc(size * size * sizeof(double));
 
-    if (mainMatrix == NULL || updatedMatrix == NULL) {
+    mainMatrix = malloc(size * size * sizeof(double));
+    calculatedMatrix = malloc(size * size * sizeof(double));
+
+    if (mainMatrix == NULL || calculatedMatrix == NULL) {
         printf("Memory allocation failed!");
         return 1;
     }
 
     populateMatrix();
     populateJobQueue();
-    printList();
     printMatrix();
 
     calculateJobs();
+    printf("%d", iterationCounter);
 
     //free memory from jobQueue
     free(mainMatrix);
-    free(updatedMatrix);
+    free(calculatedMatrix);
     return 0;
 }
