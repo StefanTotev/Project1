@@ -16,10 +16,9 @@ struct jobQueue {
 struct jobQueue *head = NULL;
 struct jobQueue *initialHead = NULL;
 
-int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=100;
-double *mainMatrix,
-           *updatedMatrix,
-           precision = 0.002;
+int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=10, iterationCounter=0;
+double *mainMatrix, *updatedMatrix, precision = 0.002;
+
 pthread_mutex_t lock;
 pthread_cond_t waitForThreads;
 
@@ -63,7 +62,7 @@ void insertElement(int row, int column, int flag) {
     pthread_mutex_unlock(&lock);
 }
 
-void populateJobQueue(int size) {
+void populateJobQueue() {
 
     int i, j;
 
@@ -85,9 +84,7 @@ void populateJobQueue(int size) {
     initialHead = head;
 }
 
-void populateMatrix(int size,
-                    double *mainMatrix,
-                    double *updatedMatrix) {
+void populateMatrix() {
 
     FILE *array = fopen("arrayOfNumbers.txt", "r");
 
@@ -103,13 +100,12 @@ void populateMatrix(int size,
     fclose(array);
 }
 
-void printMatrix(int size,
-                 double *matrix) {
+void printMatrix() {
     int i, j;
 
     for (i = 0; i < size; i++) {
         for(j = 0; j < size; j++) {
-            printf("%f ", matrix[size * i + j]);
+            printf("%f ", mainMatrix[size * i + j]);
         }
         printf("\n");
     }
@@ -135,6 +131,7 @@ void *calculateJobs() {
                     mainMatrix[size * i + j] = updatedMatrix[size * i + j];
                 }
             }
+            iterationCounter++;
             pthread_cond_broadcast(&waitForThreads);
         } else if(head != NULL) {
             tempHead = getAndForwardHead();
@@ -162,12 +159,9 @@ void *calculateJobs() {
     pthread_exit(NULL);
 }
 
-void relaxMatrix(int size,
-                 double precision,
-                 double *mainMatrix,
-                 double *updatedMatrix) {
+void relaxMatrix() {
 
-    int iterationCounter=0, createReturnCode, joinReturnCode, threadId, sizeOfQueue = 0;
+    int createReturnCode, joinReturnCode, threadId;
     void *status;
 
     pthread_t thread[NUMBER_OF_THREADS];
@@ -181,7 +175,7 @@ void relaxMatrix(int size,
         createReturnCode = pthread_create(&thread[threadId], &attributes, calculateJobs, NULL);
         if (createReturnCode) {
             printf("ERROR: pthread_create() returned code %d\n", createReturnCode);
-            return 1;
+            exit(1);
         }
     }
 
@@ -189,11 +183,10 @@ void relaxMatrix(int size,
        joinReturnCode = pthread_join(thread[threadId], &status);
        if (joinReturnCode) {
           printf("ERROR; return code from pthread_join() is %d\n", joinReturnCode);
-          return 1;
+          exit(1);
           }
        }
 
-    printMatrix(size, updatedMatrix);
     printf("%d ", iterationCounter);
 
     pthread_cond_destroy(&waitForThreads);
@@ -205,19 +198,19 @@ int main(int argc, char *argv[])
     mainMatrix = malloc(size * size * sizeof(double));
     updatedMatrix = malloc(size * size * sizeof(double));
 
-    int iterationCounter=0, i, j, sizeOfQueue = 0;
     pthread_mutex_init(&lock, NULL);
 
     if (mainMatrix == NULL || updatedMatrix == NULL) {
         printf("Memory allocation failed!");
-        return 1;
+        exit(1);
     }
 
-    populateMatrix(size, mainMatrix, updatedMatrix);
-    populateJobQueue(size);
-    printMatrix(size, mainMatrix);
+    populateMatrix();
+    populateJobQueue();
+    printMatrix();
 
-    relaxMatrix(size, precision, mainMatrix, updatedMatrix);
+    relaxMatrix();
+    printMatrix();
 
     //free memory from jobQueue
     pthread_mutex_destroy(&lock);
