@@ -16,7 +16,7 @@ struct jobQueue {
 struct jobQueue *head = NULL;
 struct jobQueue *initialHead = NULL;
 
-int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=7;
+int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=100;
 double *mainMatrix,
            *updatedMatrix,
            precision = 0.002;
@@ -70,15 +70,14 @@ void populateJobQueue(int size) {
     for(i = 1; i < size - 1; i++) {
         for(j = 1; j < size - 1; j++) {
             if((i+j)%2 != 0) {
-                if(i==1 && j==2) insertElement(i, j, 1);
-                else insertElement(i, j, 0);
+                insertElement(i, j, 0);
             }
         }
     }
     for(i = 1; i < size - 1; i++) {
         for(j = 1; j < size - 1; j++) {
             if((i+j)%2 == 0) {
-                if(i==1 && j==1) insertElement(i, j, 2);
+                if(i==1 && j==1) insertElement(i, j, 1);
                 else insertElement(i, j, 0);
             }
         }
@@ -130,14 +129,12 @@ void *calculateJobs() {
             pthread_cond_wait(&waitForThreads, &lock);
         } else if(head == NULL && waitingThreadsCount == NUMBER_OF_THREADS-1) {
             head = initialHead;
-            printf("\n%d\n",elementsBelowPrecision);
             elementsBelowPrecision = 0;
             for(i = 0; i < size; i++) {
                 for(j = 0; j < size; j++) {
                     mainMatrix[size * i + j] = updatedMatrix[size * i + j];
                 }
             }
-            printMatrix(size, mainMatrix);
             pthread_cond_broadcast(&waitForThreads);
         } else if(head != NULL) {
             tempHead = getAndForwardHead();
@@ -196,21 +193,11 @@ void relaxMatrix(int size,
           }
        }
 
-    /*do {
-        pthread_mutex_lock(&head);
-        if(head == NULL  && waitingThreadsCount == NUMBER_OF_THREADS) {
-        //Populate jobQueue
-        pthread_cond_broadcast(&waitForThreads);
-        }
-        pthread_mutex_unlock(&head);
-    } while (matrixRelaxedFlag == 0);*/
-
     printMatrix(size, updatedMatrix);
     printf("%d ", iterationCounter);
 
     pthread_cond_destroy(&waitForThreads);
     pthread_attr_destroy(&attributes);
-    pthread_exit(NULL);
 }
 
 int main(int argc, char *argv[])
