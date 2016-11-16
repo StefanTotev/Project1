@@ -4,65 +4,89 @@
 #include <stdbool.h>
 #include <math.h>
 
+//Create a structure containing the elements of the matrix that can be computed in parallel
 struct jobQueue {
     int row;
     int column;
-    int syncFlag;
     struct jobQueue *nextJob;
 };
-struct jobQueue *head = NULL;
-struct jobQueue *initialHead = NULL;
+struct jobQueue *firstQueueHead = NULL;
+struct jobQueue *secondQueueHead = NULL;
+struct jobQueue *initialFirstQueueHead = NULL;
+struct jobQueue *initialSecondQueueHead = NULL;
 
-int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=8, iterationCounter=0;
+int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=6, iterationCounter=0;
 double *mainMatrix, *calculatedMatrix, precision = 0.002;
 
-struct jobQueue* getAndForwardHead() {
+struct jobQueue* getAndForwardFirstHead() {
 
     //save reference to first link
-    struct jobQueue *temporaryJob = head;
-
+    struct jobQueue *temporaryJob = firstQueueHead;
     //mark next to first link as first
-    head = head->nextJob;
-
-    //return the deleted link
-    return temporaryJob;
+    if(firstQueueHead == NULL) return NULL;
+    else {
+        firstQueueHead = firstQueueHead->nextJob;
+        return temporaryJob;
+    }
 }
 
-void insertElement(int row, int column, int flag) {
-    //create a link
-    struct jobQueue *newJob = (struct jobQueue*) malloc(sizeof(struct jobQueue));
+struct jobQueue* getAndForwardSecondHead() {
 
-    newJob->row = row;
-    newJob->column = column;
-    newJob->syncFlag = flag;
+    //save reference to first link
+    struct jobQueue *temporaryJob = secondQueueHead;
+    //mark next to first link as first
+    if(secondQueueHead == NULL) return NULL;
+    else {
+        secondQueueHead = secondQueueHead->nextJob;
+        return temporaryJob;
+    }
+}
+
+void printList(struct jobQueue* head) {
+   struct jobQueue *ptr = head;
+   printf("\n[ ");
+
+   //start from the beginning
+   while(ptr != NULL) {
+      printf("(%d,%d) ",ptr->row,ptr->column);
+      ptr = ptr->nextJob;
+   }
+
+   printf(" ]");
+}
+
+void insertElement(int queueNumber, int row, int column) {
+    //create a link
+    struct jobQueue *link = (struct jobQueue*) malloc(sizeof(struct jobQueue));
+
+    link->row = row;
+    link->column = column;
 
     //point it to old first node
-    newJob->nextJob = head;
-
-    //point first to new first node
-    head = newJob;
+    if (queueNumber == 1){
+        link->nextJob = firstQueueHead;
+        firstQueueHead = link;
+    } else if (queueNumber == 2) {
+        link->nextJob = secondQueueHead;
+        secondQueueHead = link;
+    }
 }
 
-void populateJobQueue() {
+void populateJobQueues() {
 
     int i, j;
 
-    for(i = 1; i < size - 1; i++) {
-        for(j = 1; j < size - 1; j++) {
-            if((i+j)%2 != 0) {
-                if(i==1 && j==2) insertElement(i, j, 1);
-                else insertElement(i, j, 0);
-            }
-        }
-    }
-    for(i = 1; i < size - 1; i++) {
-        for(j = 1; j < size - 1; j++) {
+    for(i = size - 2; i > 0; i--) {
+        for(j = size - 2; j > 0; j--) {
             if((i+j)%2 == 0) {
-                insertElement(i, j, 0);
+                insertElement(1, i, j);
+            } else if((i+j)%2 != 0) {
+                insertElement(2, i, j);
             }
         }
     }
-    initialHead = head;
+    initialFirstQueueHead = firstQueueHead;
+    initialSecondQueueHead = secondQueueHead;
 }
 
 void populateMatrix() {
@@ -102,32 +126,42 @@ void printMatrix() {
     printf("\n");
 }
 
+void addElement(int row, int column){
+
+    calculatedMatrix[size*row+column] = (calculatedMatrix[size*row + (column - 1)] +
+                                      calculatedMatrix[size*row + (column + 1)] +
+                                      calculatedMatrix[size*(row - 1) + column] +
+                                      calculatedMatrix[size*(row + 1) + column]) / 4;
+    if (fabs(mainMatrix[size * row + column] - calculatedMatrix[size * row + column]) < precision) {
+        elementsBelowPrecision++;
+    }
+}
+
 void calculateJobs() {
-    int row, column, innerElementsInMatrix = (size-2)*(size-2);
-    struct jobQueue *tempHead;
-    while(elementsBelowPrecision < innerElementsInMatrix) {
-        tempHead = getAndForwardHead();
+    int innerElementsInMatrix = (size-2)*(size-2), queueNumber = 1, elementsAreAbovePrecision = 1, i, j;
+    struct jobQueue *head;
+    while(elementsAreAbovePrecision) {
 
-        row = tempHead->row;
-        column = tempHead->column;
+        if(queueNumber == 1) head = getAndForwardFirstHead();
+        else head = getAndForwardSecondHead();
 
-        calculatedMatrix[size*row+column] = (calculatedMatrix[size*row + (column - 1)] +
-                                          calculatedMatrix[size*row + (column + 1)] +
-                                          calculatedMatrix[size*(row - 1) + column] +
-                                          calculatedMatrix[size*(row + 1) + column]) / 4;
-        if (fabs(mainMatrix[size * row + column] - calculatedMatrix[size * row + column]) < precision) {
-            elementsBelowPrecision++;
-        }
-
-        if (tempHead->syncFlag == 1) {
-            head = initialHead;
-            if(elementsBelowPrecision < innerElementsInMatrix) elementsBelowPrecision=0;
-            updateMatrix();
-            iterationCounter++;
-            printMatrix();
+        if(head != NULL) {
+            addElement(head->row, head->column);
+        } else if(head == NULL){
+            if (queueNumber == 1) {
+                firstQueueHead = initialFirstQueueHead;
+                queueNumber = 2;
+            } else {
+                secondQueueHead = initialSecondQueueHead;
+                queueNumber = 1;
+                iterationCounter++;
+                if (elementsBelowPrecision < innerElementsInMatrix) elementsBelowPrecision = 0;
+                updateMatrix();
+                printMatrix();
+            }
+            if (elementsBelowPrecision == innerElementsInMatrix) elementsAreAbovePrecision = 0;
         }
     }
-    free(tempHead);
 }
 
 int main(int argc, char *argv[])
@@ -142,7 +176,7 @@ int main(int argc, char *argv[])
     }
 
     populateMatrix();
-    populateJobQueue();
+    populateJobQueues();
     printMatrix();
 
     calculateJobs();
