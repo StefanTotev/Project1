@@ -5,83 +5,97 @@
 #include <math.h>
 #include <pthread.h>
 
-#define NUMBER_OF_THREADS 5
+#define NUMBER_OF_THREADS 2
 
 struct jobQueue {
     int row;
     int column;
-    int syncFlag;
     struct jobQueue *nextJob;
 };
-struct jobQueue *head = NULL;
-struct jobQueue *initialHead = NULL;
+struct jobQueue *firstQueueHead = NULL;
+struct jobQueue *secondQueueHead = NULL;
+struct jobQueue *initialFirstQueueHead = NULL;
+struct jobQueue *initialSecondQueueHead = NULL;
 
-int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=10, iterationCounter=0;
-double *mainMatrix, *updatedMatrix, precision = 0.002;
+int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=8, iterationCounter=0;
+double *mainMatrix, *calculatedMatrix, precision = 0.002;
 
 pthread_mutex_t lock;
+pthread_mutex_t precisionLock;
 pthread_cond_t waitForThreads;
 
-/*void freeJobQueue() {
-    struct jobQueue *curr = head;
-    pthread_mutex_lock(&lock);
-    while ((curr = head) != NULL) { // set curr to head, stop if list empty.
-    head = head->nextJob;          // advance head to next element.
-    free (curr);                // delete saved pointer.
-}
-    pthread_mutex_unlock(&lock);
-
-}*/
-
-struct jobQueue* getAndForwardHead() {
+struct jobQueue* getAndForwardFirstHead() {
 
     //save reference to first link
-    struct jobQueue *temporaryJob = head;
-
+    struct jobQueue *temporaryJob = firstQueueHead;
     //mark next to first link as first
-    head = head->nextJob;
-
-    //return the deleted link
-    return temporaryJob;
+    if(firstQueueHead == NULL) return NULL;
+    else {
+        firstQueueHead = firstQueueHead->nextJob;
+        return temporaryJob;
+    }
 }
 
-void insertElement(int row, int column, int flag) {
+struct jobQueue* getAndForwardSecondHead() {
+
+    //save reference to first link
+    struct jobQueue *temporaryJob = secondQueueHead;
+    //mark next to first link as first
+    if(secondQueueHead == NULL) return NULL;
+    else {
+        secondQueueHead = secondQueueHead->nextJob;
+        return temporaryJob;
+    }
+}
+
+
+//Does not need to be locked since it's only used sequentially
+void insertElement(int queueNumber, int row, int column) {
     //create a link
     struct jobQueue *link = (struct jobQueue*) malloc(sizeof(struct jobQueue));
 
-    pthread_mutex_lock(&lock);
     link->row = row;
     link->column = column;
-    link->syncFlag = flag;
 
     //point it to old first node
-    link->nextJob = head;
-
-    //point first to new first node
-    head = link;
-    pthread_mutex_unlock(&lock);
+    if (queueNumber == 1){
+        link->nextJob = firstQueueHead;
+        firstQueueHead = link;
+    } else if (queueNumber == 2) {
+        link->nextJob = secondQueueHead;
+        secondQueueHead = link;
+    }
 }
 
-void populateJobQueue() {
+void printList(struct jobQueue* head) {
+   struct jobQueue *ptr = head;
+   printf("\n[ ");
+
+   //start from the beginning
+   while(ptr != NULL) {
+      printf("(%d,%d) ",ptr->row,ptr->column);
+      ptr = ptr->nextJob;
+   }
+
+   printf(" ]");
+}
+
+void populateJobQueues() {
 
     int i, j;
 
     for(i = 1; i < size - 1; i++) {
         for(j = 1; j < size - 1; j++) {
             if((i+j)%2 != 0) {
-                insertElement(i, j, 0);
+                insertElement(1, i, j);
             }
-        }
-    }
-    for(i = 1; i < size - 1; i++) {
-        for(j = 1; j < size - 1; j++) {
             if((i+j)%2 == 0) {
-                if(i==1 && j==1) insertElement(i, j, 1);
-                else insertElement(i, j, 0);
+                insertElement(2, i, j);
             }
         }
     }
-    initialHead = head;
+    initialFirstQueueHead = firstQueueHead;
+    initialSecondQueueHead = secondQueueHead;
 }
 
 void populateMatrix() {
@@ -93,11 +107,20 @@ void populateMatrix() {
 
     while(fscanf(array, "%f", &num) > 0 && i < size*size) {
         mainMatrix[i] = num;
-        updatedMatrix[i] = mainMatrix[i];
+        calculatedMatrix[i] = mainMatrix[i];
         i++;
     }
 
     fclose(array);
+}
+
+void updateMatrix() {
+    int i, j;
+    for(i = 0; i < size; i++) {
+        for(j = 0; j < size; j++) {
+            mainMatrix[size * i + j] = calculatedMatrix[size * i + j];
+        }
+    }
 }
 
 void printMatrix() {
@@ -112,51 +135,69 @@ void printMatrix() {
     printf("\n");
 }
 
-void *calculateJobs() {
-    int i, j, row, column, elementsInMatrix = (size-2)*(size-2);
-    struct jobQueue *tempHead = NULL;
+void addElement(int row, int column){
 
-    while(elementsBelowPrecision < elementsInMatrix) {
-        tempHead = NULL;
+    calculatedMatrix[size*row+column] = (calculatedMatrix[size*row + (column - 1)] +
+                                      calculatedMatrix[size*row + (column + 1)] +
+                                      calculatedMatrix[size*(row - 1) + column] +
+                                      calculatedMatrix[size*(row + 1) + column]) / 4;
+    if (fabs(mainMatrix[size * row + column] - calculatedMatrix[size * row + column]) < precision) {
+        pthread_mutex_lock(&precisionLock);
+        elementsBelowPrecision++;
+        pthread_mutex_unlock(&precisionLock);
+    }
+}
+/*int elementsAreAbovePrecision() {
+    int innerElementsInMatrix = (size-2)*(size-2), returnStatus;
+    pthread_mutex_lock(&precisionLock);
+    if (elementsBelowPrecision == innerElementsInMatrix) returnStatus = 0;
+    else returnStatus = 1;
+    pthread_mutex_unlock(&precisionLock);
+    return returnStatus;
+}*/
+
+void *calculateJobs(void *attr) {
+    int innerElementsInMatrix = (size-2)*(size-2), queueNumber = 1, id = (int) attr, elementsAreAbovePrecision = 1;
+    struct jobQueue *head;
+    while(elementsAreAbovePrecision) {
         pthread_mutex_lock(&lock);
-
-        if(head == NULL && waitingThreadsCount < NUMBER_OF_THREADS-1) {
-            waitingThreadsCount++;
-            pthread_cond_wait(&waitForThreads, &lock);
-        } else if(head == NULL && waitingThreadsCount == NUMBER_OF_THREADS-1) {
-            head = initialHead;
-            elementsBelowPrecision = 0;
-            for(i = 0; i < size; i++) {
-                for(j = 0; j < size; j++) {
-                    mainMatrix[size * i + j] = updatedMatrix[size * i + j];
-                }
-            }
-            iterationCounter++;
-            pthread_cond_broadcast(&waitForThreads);
-        } else if(head != NULL) {
-            tempHead = getAndForwardHead();
-        }
-
+        if(queueNumber == 1) head = getAndForwardFirstHead();
+        else head = getAndForwardSecondHead();
         pthread_mutex_unlock(&lock);
 
-        if(tempHead != NULL){
+        if(head != NULL) {
+            addElement(head->row, head->column);
+        }
 
-            row = tempHead->row;
-            column = tempHead->column;
-
-            updatedMatrix[size*row+column] = (updatedMatrix[size*row + (column - 1)] +
-                                              updatedMatrix[size*row + (column + 1)] +
-                                              updatedMatrix[size*(row - 1) + column] +
-                                              updatedMatrix[size*(row + 1) + column]) / 4;
-            if (fabs(mainMatrix[size * row + column] - updatedMatrix[size * row + column]) < precision) {
-                pthread_mutex_lock(&lock);
-                elementsBelowPrecision++;
-                pthread_mutex_unlock(&lock);
+        if(head == NULL){
+            pthread_mutex_lock(&lock);
+            if(waitingThreadsCount < NUMBER_OF_THREADS-1){
+                waitingThreadsCount++;
+                pthread_cond_wait(&waitForThreads, &lock);
+            } else if(waitingThreadsCount == NUMBER_OF_THREADS-1) {
+                if (queueNumber == 1) {
+                    firstQueueHead = initialFirstQueueHead;
+                    queueNumber = 2;
+                } else {
+                    secondQueueHead = initialSecondQueueHead;
+                    queueNumber = 1;
+                    iterationCounter++;
+                    pthread_mutex_lock(&precisionLock);
+                    if (elementsBelowPrecision < innerElementsInMatrix) elementsBelowPrecision = 0;
+                    pthread_mutex_unlock(&precisionLock);
+                    updateMatrix();
+                    printMatrix();
+                }
+                pthread_cond_broadcast(&waitForThreads);
+                waitingThreadsCount = 0;
             }
+            pthread_mutex_lock(&precisionLock);
+            if (elementsBelowPrecision == innerElementsInMatrix) elementsAreAbovePrecision = 0;
+            pthread_mutex_unlock(&precisionLock);
+            pthread_mutex_unlock(&lock);
         }
     }
-
-    pthread_exit(NULL);
+    pthread_exit((void*) 0);
 }
 
 void relaxMatrix() {
@@ -172,9 +213,9 @@ void relaxMatrix() {
     //Check if status from creating a condition variable is 0 or not
 
     for(threadId = 0; threadId < NUMBER_OF_THREADS; threadId++) {
-        createReturnCode = pthread_create(&thread[threadId], &attributes, calculateJobs, NULL);
+        createReturnCode = pthread_create(&thread[threadId], &attributes, calculateJobs, (void *) threadId);
         if (createReturnCode) {
-            printf("ERROR: pthread_create() returned code %d\n", createReturnCode);
+            printf("ERROR: return code from pthread_create is %d\n", createReturnCode);
             exit(1);
         }
     }
@@ -196,25 +237,26 @@ void relaxMatrix() {
 int main(int argc, char *argv[])
 {
     mainMatrix = malloc(size * size * sizeof(double));
-    updatedMatrix = malloc(size * size * sizeof(double));
+    calculatedMatrix = malloc(size * size * sizeof(double));
 
     pthread_mutex_init(&lock, NULL);
+    pthread_mutex_init(&precisionLock, NULL);
 
-    if (mainMatrix == NULL || updatedMatrix == NULL) {
+    if (mainMatrix == NULL || calculatedMatrix == NULL) {
         printf("Memory allocation failed!");
         exit(1);
     }
 
     populateMatrix();
-    populateJobQueue();
+    populateJobQueues();
     printMatrix();
 
     relaxMatrix();
-    printMatrix();
 
     //free memory from jobQueue
+    pthread_mutex_destroy(&precisionLock);
     pthread_mutex_destroy(&lock);
     free(mainMatrix);
-    free(updatedMatrix);
+    free(calculatedMatrix);
     return 0;
 }
