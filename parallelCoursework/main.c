@@ -5,7 +5,7 @@
 #include <math.h>
 #include <pthread.h>
 
-#define NUMBER_OF_THREADS 2
+#define NUMBER_OF_THREADS 10
 
 struct jobQueue {
     int row;
@@ -17,7 +17,7 @@ struct jobQueue *secondQueueHead = NULL;
 struct jobQueue *initialFirstQueueHead = NULL;
 struct jobQueue *initialSecondQueueHead = NULL;
 
-int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=8, iterationCounter=0;
+int waitingThreadsCount = 0, matrixRelaxedFlag = 0, elementsBelowPrecision = 0, size=6, iterationCounter=0;
 double *mainMatrix, *calculatedMatrix, precision = 0.002;
 
 pthread_mutex_t lock;
@@ -84,12 +84,11 @@ void populateJobQueues() {
 
     int i, j;
 
-    for(i = 1; i < size - 1; i++) {
-        for(j = 1; j < size - 1; j++) {
-            if((i+j)%2 != 0) {
-                insertElement(1, i, j);
-            }
+    for(i = size - 2; i > 0; i--) {
+        for(j = size - 2; j > 0; j--) {
             if((i+j)%2 == 0) {
+                insertElement(1, i, j);
+            } else if((i+j)%2 != 0) {
                 insertElement(2, i, j);
             }
         }
@@ -147,17 +146,9 @@ void addElement(int row, int column){
         pthread_mutex_unlock(&precisionLock);
     }
 }
-/*int elementsAreAbovePrecision() {
-    int innerElementsInMatrix = (size-2)*(size-2), returnStatus;
-    pthread_mutex_lock(&precisionLock);
-    if (elementsBelowPrecision == innerElementsInMatrix) returnStatus = 0;
-    else returnStatus = 1;
-    pthread_mutex_unlock(&precisionLock);
-    return returnStatus;
-}*/
 
 void *calculateJobs(void *attr) {
-    int innerElementsInMatrix = (size-2)*(size-2), queueNumber = 1, id = (int) attr, elementsAreAbovePrecision = 1;
+    int i, j, innerElementsInMatrix = (size-2)*(size-2), queueNumber = 1, id = (int) attr, elementsAreAbovePrecision = 1;
     struct jobQueue *head;
     while(elementsAreAbovePrecision) {
         pthread_mutex_lock(&lock);
@@ -167,20 +158,14 @@ void *calculateJobs(void *attr) {
 
         if(head != NULL) {
             addElement(head->row, head->column);
-        }
-
-        if(head == NULL){
+        } else if(head == NULL){
             pthread_mutex_lock(&lock);
+
             if(waitingThreadsCount < NUMBER_OF_THREADS-1){
                 waitingThreadsCount++;
                 pthread_cond_wait(&waitForThreads, &lock);
             } else if(waitingThreadsCount == NUMBER_OF_THREADS-1) {
-                if (queueNumber == 1) {
-                    firstQueueHead = initialFirstQueueHead;
-                    queueNumber = 2;
-                } else {
-                    secondQueueHead = initialSecondQueueHead;
-                    queueNumber = 1;
+                if (queueNumber == 2)  {
                     iterationCounter++;
                     pthread_mutex_lock(&precisionLock);
                     if (elementsBelowPrecision < innerElementsInMatrix) elementsBelowPrecision = 0;
@@ -191,6 +176,15 @@ void *calculateJobs(void *attr) {
                 pthread_cond_broadcast(&waitForThreads);
                 waitingThreadsCount = 0;
             }
+
+            if (queueNumber == 1) {
+                firstQueueHead = initialFirstQueueHead;
+                queueNumber = 2;
+            } else {
+                secondQueueHead = initialSecondQueueHead;
+                queueNumber = 1;
+            }
+
             pthread_mutex_lock(&precisionLock);
             if (elementsBelowPrecision == innerElementsInMatrix) elementsAreAbovePrecision = 0;
             pthread_mutex_unlock(&precisionLock);
