@@ -5,33 +5,38 @@
 #include <math.h>
 #include <pthread.h>
 
+//Contains the coordinates of the elements that can be calculated in parallel
 struct jobQueue {
     int row;
     int column;
     struct jobQueue *nextJob;
 };
 
+//Defines the inputs that are passed to the program at run time
 struct inputs {
     int size;
     int numberOfThreads;
     double precision;
 };
 
+//Defines the two queues and the initial positions of their heads
 struct jobQueue *firstQueueHead = NULL,
                 *secondQueueHead = NULL,
                 *initialFirstQueueHead = NULL,
                 *initialSecondQueueHead = NULL;
 
+//Mutexes and condition variables
 pthread_mutex_t lock;
 pthread_mutex_t precisionLock;
 pthread_mutex_t headLock;
 pthread_cond_t waitForThreads;
 
+//Shared variables that are needed for synchronisation of the threads
 int iterationCounter=0,
     waitingThreadsCount = 0,
     elementsBelowPrecision = 0;
 
-double *mainMatrix, *calculatedMatrix;
+double *matrix;
 
 
 //Returns head from first queue and moves it to the next element in the queue
@@ -70,7 +75,7 @@ void insertElement(int queueNumber, int row, int column) {
     //create a new job
     struct jobQueue *newJob = (struct jobQueue*) malloc(sizeof(struct jobQueue));
 
-    //assign passed arguments to values in the new job
+    //Assign passed arguments to values in the new job
     newJob->row = row;
     newJob->column = column;
 
@@ -108,10 +113,9 @@ void populateMatrix(int size) {
     //Assign as many elements to the matrix as its size
     for(i = 0; i < size * size; i++)
     {
-        //Assign element from the file to the two matrices
+        //Assign element from the file to the matrix
         if (fscanf(array, "%f", &num) > 0) {
-            mainMatrix[i] = num;
-            calculatedMatrix[i] = mainMatrix[i];
+            matrix[i] = num;
         } else {
             //If no more elements are left in the file, exit with an error
             printf("Not enough elements in the file!");
@@ -121,80 +125,101 @@ void populateMatrix(int size) {
     fclose(array);
 }
 
-//Assign the newly calculated elements from the updated to the main matrix
-void updateMatrix(int size) {
-    int i, j;
-    for(i = 0; i < size; i++) {
-        for(j = 0; j < size; j++) {
-            mainMatrix[size * i + j] = calculatedMatrix[size * i + j];
-        }
-    }
-}
-
-void printMatrix(int size) {
-    int i, j;
-
-    for (i = 0; i < size; i++) {
-        for(j = 0; j < size; j++) {
-            printf("%f ", mainMatrix[size * i + j]);
-        }
-        printf("\n");
-    }
-    printf("\n");
-}
-
+//Adds the four numbers surrounding the element identified by "row and "column"
 void addElement(int row, int column, int size, double precision){
 
-    calculatedMatrix[size*row+column] = (calculatedMatrix[size*row + (column - 1)] +
-                                      calculatedMatrix[size*row + (column + 1)] +
-                                      calculatedMatrix[size*(row - 1) + column] +
-                                      calculatedMatrix[size*(row + 1) + column]) / 4;
-    if (fabs(mainMatrix[size * row + column] - calculatedMatrix[size * row + column]) < precision) {
+    double tempValue = matrix[size * row + column], difference;
+    //Calculate element
+    matrix[size * row + column] =
+            (matrix[size * row + (column - 1)] +
+             matrix[size * row + (column + 1)] +
+             matrix[size * (row - 1) + column] +
+             matrix[size * (row + 1) + column]) / 4;
+
+    //Calculate the difference between the calculated element and its old value
+    difference=fabs(matrix[size*row+column]-tempValue);
+
+    //If that difference is below the precision, increment "elementsBelowPrecision"
+    if (difference < precision) {
+        //Locked since it's a shared variable
         pthread_mutex_lock(&precisionLock);
         elementsBelowPrecision++;
         pthread_mutex_unlock(&precisionLock);
     }
 }
 
+/* Defines  the repeated execution of the created threads.
+ * The threads repeatedly iterate over the first queue of jobs that can be
+ * executed in parallel, then wait for all of the threads to finish their
+ * executions before continuing to the second queue. The process is repeated with
+ * the second queue with the difference that at the end of the second queue,
+ * the shared variables are updated and the job queues are reset.
+ */
 void *calculateJobs(void* attr) {
+    //Receives the size, precision and number of threads
     struct inputs *fileInputs = (struct inputs*)attr;
 
-    int innerElementsInMatrix = (fileInputs->size-2)*(fileInputs->size-2), queueNumber = 1, elementsAreAbovePrecision = 1;
-    struct jobQueue *head;
+    int innerElementsInMatrix = (fileInputs->size-2)*(fileInputs->size-2),
+        queueNumber = 1, //Indicates which of the two queues is being used
+        elementsAreAbovePrecision = 1; //Indicates when the loop should stop
+    struct jobQueue *head; //Serves as a copy of the current head
 
+    //Iterate over the job queue until all of the elements are under the precision
     while(elementsAreAbovePrecision) {
 
+        //Locked since the thread accesses a shared resource (head of queue)
         pthread_mutex_lock(&headLock);
-        if(queueNumber == 1) head = getAndForwardFirstHead();
-        else head = getAndForwardSecondHead();
+        //Get the head of the linked list depending on which queue is being used
+        if (queueNumber == 1) {
+            head = getAndForwardFirstHead();
+        } else {
+            head = getAndForwardSecondHead();
+        }
         pthread_mutex_unlock(&headLock);
 
+        //Add the next element in the queue unless all of them are calculated
         if(head != NULL) {
-            addElement(head->row, head->column, fileInputs->size, fileInputs->precision);
+            addElement(head->row,
+                       head->column,
+                       fileInputs->size,
+                       fileInputs->precision);
         }
-
+        //If all the elements in the queue are calculated, wait for all threads
         else if(head == NULL){
 
+            //Lock since it accesses shared resources
             pthread_mutex_lock(&lock);
 
+            //If the number of threads that are waiting is below the total number
+            //of threads, the current thread waits for the last thread to finish
             if(waitingThreadsCount < fileInputs->numberOfThreads-1){
+                //Increment the shared variable and release the lock
                 waitingThreadsCount++;
                 pthread_cond_wait(&waitForThreads, &lock);
             }
 
+            //If all of the other threads have finished their execution and the
+            //current thread is the last one,
             else if(waitingThreadsCount == fileInputs->numberOfThreads-1) {
+                //If all of the elements in the inner matrix have been calculated
                 if (queueNumber == 2)  {
                     iterationCounter++;
+                    //Reset the counter for the number of elements that are above
+                    //below the precision
                     pthread_mutex_lock(&precisionLock);
-                    if (elementsBelowPrecision < innerElementsInMatrix) elementsBelowPrecision = 0;
+                    if (elementsBelowPrecision < innerElementsInMatrix) {
+                        elementsBelowPrecision = 0;
+                    }
                     pthread_mutex_unlock(&precisionLock);
-                    updateMatrix(fileInputs->size);
                 }
 
+                //Release all waiting threads and reset the counter
                 pthread_cond_broadcast(&waitForThreads);
                 waitingThreadsCount = 0;
             }
 
+            //If the queues have finished executing the first queue, they
+            //go to the second one and vice versa
             if (queueNumber == 1) {
                 firstQueueHead = initialFirstQueueHead;
                 queueNumber = 2;
@@ -205,35 +230,46 @@ void *calculateJobs(void* attr) {
 
             pthread_mutex_unlock(&lock);
 
+            //If all elements in the matrix are below the precision, break the loop
             pthread_mutex_lock(&precisionLock);
-            if (elementsBelowPrecision == innerElementsInMatrix) elementsAreAbovePrecision = 0;
+            if (elementsBelowPrecision == innerElementsInMatrix) {
+                elementsAreAbovePrecision = 0;
+            }
             pthread_mutex_unlock(&precisionLock);
         }
     }
+    free(head);
     pthread_exit((void*) 0);
 }
 
+//Initialises, creates and joins threads
 void relaxMatrix(struct inputs* fileInputs) {
 
-    int returnCode, threadId;
+    int returnCode, i;
     void *status;
 
+    //Initialise threads and their attributes
     pthread_t thread[fileInputs->numberOfThreads];
     pthread_attr_t attributes;
     pthread_attr_init(&attributes);
     pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_JOINABLE);
     pthread_cond_init(&waitForThreads, NULL);
 
-    for(threadId = 0; threadId < fileInputs->numberOfThreads; threadId++) {
-        returnCode = pthread_create(&thread[threadId], &attributes, calculateJobs, (void *) fileInputs);
+    //Creates threads and passes the size, precision and number of threads to  them
+    for(i = 0; i < fileInputs->numberOfThreads; i++) {
+        returnCode = pthread_create(&thread[i],
+                                    &attributes,
+                                    calculateJobs,
+                                    (void *) fileInputs);
         if (returnCode) {
             printf("ERROR: return code from pthread_create is %d\n", returnCode);
             exit(1);
         }
     }
 
-    for(threadId = 0; threadId < fileInputs->numberOfThreads; threadId++) {
-       returnCode = pthread_join(thread[threadId], &status);
+    //Joins the newly created threads to the main thread of execution
+    for(i = 0; i < fileInputs->numberOfThreads; i++) {
+       returnCode = pthread_join(thread[i], &status);
        if (returnCode) {
           printf("ERROR; return code from pthread_join() is %d\n", returnCode);
           exit(1);
@@ -242,19 +278,20 @@ void relaxMatrix(struct inputs* fileInputs) {
 
     printf("%d ", iterationCounter);
 
+    free(&status);
     pthread_cond_destroy(&waitForThreads);
     pthread_attr_destroy(&attributes);
 }
 
 int main(int argc, char *argv[]) {
 
-    int size=10, numberOfThreads = 5;
+    int size=12, numberOfThreads = 5;
     double precision = 0.002;
 
-    mainMatrix = malloc(size * size * sizeof(double));
-    calculatedMatrix = malloc(size * size * sizeof(double));
-
+    //Allocate memory to variables
+    matrix = malloc(size * size * sizeof(double));
     struct inputs *fileInputs = malloc(sizeof(struct inputs));
+
     fileInputs->size = size;
     fileInputs->numberOfThreads = numberOfThreads;
     fileInputs->precision = precision;
@@ -263,7 +300,8 @@ int main(int argc, char *argv[]) {
     pthread_mutex_init(&precisionLock, NULL);
     pthread_mutex_init(&headLock, NULL);
 
-    if (mainMatrix == NULL || calculatedMatrix == NULL || fileInputs == NULL) {
+    //Check if memory allocation was successful
+    if (matrix == NULL || fileInputs == NULL) {
         printf("Memory allocation failed!");
         exit(1);
     }
@@ -271,18 +309,19 @@ int main(int argc, char *argv[]) {
     populateMatrix(size);
     populateJobQueues(size);
 
-    //Remember the original position of the heads
+    //Remember the original posit   ion of the heads
     initialFirstQueueHead = firstQueueHead;
     initialSecondQueueHead = secondQueueHead;
 
     relaxMatrix(fileInputs);
 
-    //free memory from jobQueue
+    //Free allocated memory and destroy mutexes
     pthread_mutex_destroy(&headLock);
     pthread_mutex_destroy(&precisionLock);
     pthread_mutex_destroy(&lock);
+    free(initialFirstQueueHead);
+    free(initialSecondQueueHead);
     free(fileInputs);
-    free(mainMatrix);
-    free(calculatedMatrix);
+    free(matrix);
     return 0;
 }
