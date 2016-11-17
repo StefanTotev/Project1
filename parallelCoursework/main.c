@@ -285,6 +285,9 @@ void relaxMatrix(struct inputs* fileInputs) {
 
 int main(int argc, char *argv[]) {
 
+    clock_t start, end;
+    start = clock();
+
     int size=12, numberOfThreads = 5;
     double precision = 0.002;
 
@@ -323,5 +326,7 @@ int main(int argc, char *argv[]) {
     free(initialSecondQueueHead);
     free(fileInputs);
     free(matrix);
+    end = clock();
+    printf("Execution time: %f!", ((double) (end - start)) / CLOCKS_PER_SEC);
     return 0;
 }
