@@ -17,10 +17,12 @@ struct jobQueue *firstQueueHead = NULL,
                 *initialFirstQueueHead = NULL,
                 *initialSecondQueueHead = NULL;
 
+
+//MOVE VARIABLES TO LOCAL
 int waitingThreadsCount = 0,
     matrixRelaxedFlag = 0,
     elementsBelowPrecision = 0,
-    size=9,
+    size=10,
     iterationCounter=0;
 
 double *mainMatrix,
@@ -29,6 +31,7 @@ double *mainMatrix,
 
 pthread_mutex_t lock;
 pthread_mutex_t precisionLock;
+pthread_mutex_t headLock;
 pthread_cond_t waitForThreads;
 
 
@@ -163,10 +166,10 @@ void *calculateJobs(void *attr) {
 
     while(elementsAreAbovePrecision) {
 
-        pthread_mutex_lock(&lock);
+        pthread_mutex_lock(&headLock);
         if(queueNumber == 1) head = getAndForwardFirstHead();
         else head = getAndForwardSecondHead();
-        pthread_mutex_unlock(&lock);
+        pthread_mutex_unlock(&headLock);
 
         if(head != NULL) {
             addElement(head->row, head->column);
@@ -194,12 +197,6 @@ void *calculateJobs(void *attr) {
                 waitingThreadsCount = 0;
             }
 
-            pthread_mutex_unlock(&lock);
-
-            pthread_mutex_lock(&precisionLock);
-            if (elementsBelowPrecision == innerElementsInMatrix) elementsAreAbovePrecision = 0;
-            pthread_mutex_unlock(&precisionLock);
-
             if (queueNumber == 1) {
                 firstQueueHead = initialFirstQueueHead;
                 queueNumber = 2;
@@ -207,6 +204,12 @@ void *calculateJobs(void *attr) {
                 secondQueueHead = initialSecondQueueHead;
                 queueNumber = 1;
             }
+
+            pthread_mutex_unlock(&lock);
+
+            pthread_mutex_lock(&precisionLock);
+            if (elementsBelowPrecision == innerElementsInMatrix) elementsAreAbovePrecision = 0;
+            pthread_mutex_unlock(&precisionLock);
         }
     }
     pthread_exit((void*) 0);
@@ -253,6 +256,7 @@ int main(int argc, char *argv[])
 
     pthread_mutex_init(&lock, NULL);
     pthread_mutex_init(&precisionLock, NULL);
+    pthread_mutex_init(&headLock, NULL);
 
     if (mainMatrix == NULL || calculatedMatrix == NULL) {
         printf("Memory allocation failed!");
@@ -265,6 +269,7 @@ int main(int argc, char *argv[])
     relaxMatrix();
 
     //free memory from jobQueue
+    pthread_mutex_destroy(&headLock);
     pthread_mutex_destroy(&precisionLock);
     pthread_mutex_destroy(&lock);
     free(mainMatrix);
