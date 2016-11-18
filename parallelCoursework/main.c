@@ -211,6 +211,8 @@ void *calculateJobs(void* attr) {
                         elementsBelowPrecision = 0;
                     }
                     pthread_mutex_unlock(&precisionLock);
+                    firstQueueHead = initialFirstQueueHead;
+                    secondQueueHead = initialSecondQueueHead;
                 }
 
                 //Release all waiting threads and reset the counter
@@ -218,27 +220,26 @@ void *calculateJobs(void* attr) {
                 waitingThreadsCount = 0;
             }
 
-            //If the queues have finished executing the first queue, they
-            //go to the second one and vice versa
-            if (queueNumber == 1) {
-                firstQueueHead = initialFirstQueueHead;
-                queueNumber = 2;
-            } else {
-                secondQueueHead = initialSecondQueueHead;
-                queueNumber = 1;
-            }
-
             pthread_mutex_unlock(&lock);
 
-            //If all elements in the matrix are below the precision, break the loop
+            //If all elements in the matrix are below the precision and this is
+            //the end of the iteration over the matrix, break the loop
             pthread_mutex_lock(&precisionLock);
-            if (elementsBelowPrecision == innerElementsInMatrix) {
+            if (elementsBelowPrecision == innerElementsInMatrix &&
+                queueNumber == 2) {
                 elementsAreAbovePrecision = 0;
             }
             pthread_mutex_unlock(&precisionLock);
+
+            //If the queues have finished executing the first queue, they
+            //go to the second one and vice versa
+            if (queueNumber == 1) {
+                queueNumber = 2;
+            } else {
+                queueNumber = 1;
+            }
         }
     }
-    free(head);
     pthread_exit((void*) 0);
 }
 
@@ -288,7 +289,7 @@ int main(int argc, char *argv[]) {
     clock_t start, end;
     start = clock();
 
-    int size=12, numberOfThreads = 5;
+    int size=5, numberOfThreads = 5;
     double precision = 0.002;
 
     //Allocate memory to variables
