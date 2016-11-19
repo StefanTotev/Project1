@@ -241,6 +241,7 @@ void *calculateJobs(void* attr) {
         }
     }
     pthread_exit((void*) 0);
+    return NULL;
 }
 
 //Initialises, creates and joins threads
@@ -279,7 +280,6 @@ void relaxMatrix(struct inputs* fileInputs) {
 
     printf("%d ", iterationCounter);
 
-    free(&status);
     pthread_cond_destroy(&waitForThreads);
     pthread_attr_destroy(&attributes);
 }
@@ -289,7 +289,7 @@ int main(int argc, char *argv[]) {
     clock_t start, end;
     start = clock();
 
-    int size=5, numberOfThreads = 5;
+    int size=50, numberOfThreads = 4;
     double precision = 0.002;
 
     //Allocate memory to variables
